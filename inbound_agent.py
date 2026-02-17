@@ -1,8 +1,6 @@
 import logging
 import os
 import secrets
-import asyncio
-import json
 import tempfile
 
 from datetime import datetime
@@ -23,7 +21,6 @@ from livekit.plugins import silero
 from livekit.plugins import openai
 from livekit.plugins import deepgram
 from livekit.plugins.google import tts as google_tts
-from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
 from actions import (
     multiplica_numeros,
@@ -53,7 +50,7 @@ logger = logging.getLogger("inbound_agent")
 BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
 
-# 🔹 Use Render environment variable instead of file
+# Google Service Account from Render ENV
 service_account_json = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON")
 
 if not service_account_json:
@@ -154,16 +151,12 @@ async def inbound_agent(ctx: JobContext):
             sample_rate=24000,
             pitch=0.0,
         ),
-        turn_detection=MultilingualModel(),
-        vad=ctx.proc.userdata["vad"],
+        vad=ctx.proc.userdata["vad"],  # ✅ Silero only
         userdata=ctx.proc.userdata,
         preemptive_generation=True,
     )
 
-    # -------------------------------------------------
     # Transcript capture
-    # -------------------------------------------------
-
     def on_conversation_item(ev):
         text = "".join(
             part for part in ev.item.content if isinstance(part, str)
@@ -176,10 +169,7 @@ async def inbound_agent(ctx: JobContext):
 
     session.on("conversation_item_added", on_conversation_item)
 
-    # -------------------------------------------------
     # Shutdown handler
-    # -------------------------------------------------
-
     async def on_shutdown(reason: str):
         await handle_after_call(
             call_id=call_id,
@@ -190,10 +180,7 @@ async def inbound_agent(ctx: JobContext):
 
     ctx.add_shutdown_callback(on_shutdown)
 
-    # -------------------------------------------------
-    # Start Agent
-    # -------------------------------------------------
-
+    # Start agent
     await session.start(
         agent=Assistant(load_instructions()),
         room=ctx.room,
