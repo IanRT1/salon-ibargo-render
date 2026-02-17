@@ -1,0 +1,11 @@
+livekit-agents
+livekit-plugins-silero
+livekit-plugins-openai
+livekit-plugins-deepgram
+livekit-plugins-google
+livekit-plugins-turn-detector
+google-api-python-client
+google-auth
+openai
+python-dotenv
+pydantic
