@@ -127,7 +127,7 @@ server.setup_fnc = prewarm
 # Telephony Session
 # -------------------------------------------------
 
-@server.rtc_session()
+@server.rtc_session(name="inbound_agent")
 async def inbound_agent(ctx: JobContext):
 
     call_id = generate_call_id()
