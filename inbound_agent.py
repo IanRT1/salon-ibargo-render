@@ -10,10 +10,10 @@ from dotenv import load_dotenv
 
 from livekit.agents import (
     Agent,
-    AgentServer,
     AgentSession,
     JobContext,
     JobProcess,
+    WorkerOptions,
     cli,
 )
 
@@ -50,13 +50,10 @@ logger = logging.getLogger("inbound_agent")
 BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
 
-# Google Service Account from Render ENV
 service_account_json = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON")
-
 if not service_account_json:
     raise RuntimeError("GOOGLE_SERVICE_ACCOUNT_JSON not set")
 
-# Write credentials to temporary file at runtime
 with tempfile.NamedTemporaryFile(delete=False, suffix=".json") as tmp:
     tmp.write(service_account_json.encode())
     tmp.flush()
@@ -106,11 +103,8 @@ class Assistant(Agent):
 
 
 # -------------------------------------------------
-# Server Setup
+# Prewarm
 # -------------------------------------------------
-
-server = AgentServer()
-
 
 def prewarm(proc: JobProcess):
     proc.userdata["vad"] = silero.VAD.load(
@@ -120,15 +114,12 @@ def prewarm(proc: JobProcess):
     )
 
 
-server.setup_fnc = prewarm
-
-
 # -------------------------------------------------
-# Telephony Session
+# Entrypoint (Inbound)
 # -------------------------------------------------
 
-@server.rtc_session(name="inbound_agent")
-async def inbound_agent(ctx: JobContext):
+async def entrypoint(ctx: JobContext):
+    logger.info("INBOUND ENTRYPOINT TRIGGERED")
 
     call_id = generate_call_id()
     ctx.proc.userdata["call_id"] = call_id
@@ -136,6 +127,9 @@ async def inbound_agent(ctx: JobContext):
     call_started_at = datetime.now(tz=PST)
 
     transcript: list[dict[str, str]] = []
+
+    # ✅ Connect FIRST so the room + media is actually established
+    await ctx.connect()
 
     session = AgentSession(
         stt=deepgram.STT(model="nova-3"),
@@ -151,21 +145,19 @@ async def inbound_agent(ctx: JobContext):
             sample_rate=24000,
             pitch=0.0,
         ),
-        vad=ctx.proc.userdata["vad"],  # ✅ Silero only
+        vad=ctx.proc.userdata["vad"],
         userdata=ctx.proc.userdata,
         preemptive_generation=True,
     )
 
-    # Transcript capture
+    # Transcript capture (YOUR exact style)
     def on_conversation_item(ev):
         text = "".join(
             part for part in ev.item.content if isinstance(part, str)
         ).strip()
 
         if text:
-            transcript.append(
-                {"role": ev.item.role, "content": text}
-            )
+            transcript.append({"role": ev.item.role, "content": text})
 
     session.on("conversation_item_added", on_conversation_item)
 
@@ -180,15 +172,14 @@ async def inbound_agent(ctx: JobContext):
 
     ctx.add_shutdown_callback(on_shutdown)
 
-    # Start agent
+    # Start agent session
     await session.start(
         agent=Assistant(load_instructions()),
         room=ctx.room,
     )
 
-    await ctx.connect()
-
-    session.say(
+    # ✅ MUST await say()
+    await session.say(
         "Hola, soy Mia. Estás llamando al salón Ibargo. ¿En qué puedo ayudarte?",
         allow_interruptions=True,
     )
@@ -199,4 +190,10 @@ async def inbound_agent(ctx: JobContext):
 # -------------------------------------------------
 
 if __name__ == "__main__":
-    cli.run_app(server)
+    cli.run_app(
+        WorkerOptions(
+            entrypoint_fnc=entrypoint,
+            agent_name="inbound-agent",
+            prewarm_fnc=prewarm,
+        )
+    )
