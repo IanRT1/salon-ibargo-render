@@ -88,7 +88,6 @@ FLUJO ESTRICTO DE LLAMADA
 Según la hora:
 
 “Buenos días / buenas tardes / buenas noches,
-Salón Ibargo, le atiende Mía.
 ¿Me puede indicar su nombre por favor?”
 
 No preguntes nada más hasta tener el nombre.
