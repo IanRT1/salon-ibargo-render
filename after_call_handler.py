@@ -64,7 +64,12 @@ async def handle_after_call(
     }
 
     append_csv(CALLS_CSV, CALL_HEADERS, call_row)
-    append_row_to_sheet("Llamadas", CALL_HEADERS, call_row)
+
+    append_row_to_sheet(
+        sheet_name="Llamadas",
+        headers=CALL_HEADERS,
+        row=call_row,
+    )
 
     confirmed_visit = session_userdata.get("confirmed_visit")
     if confirmed_visit:
@@ -78,4 +83,9 @@ async def handle_after_call(
         }
 
         append_csv(SCHEDULE_CSV, SCHEDULE_HEADERS, visit_row)
-        append_row_to_sheet("Citas", SCHEDULE_HEADERS, visit_row)
+
+        append_row_to_sheet(
+            sheet_name="Citas",
+            headers=SCHEDULE_HEADERS,
+            row=visit_row,
+        )
