@@ -1,11 +1,20 @@
+# ==============================
+# LiveKit Agents Core
+# ==============================
 livekit-agents
 livekit-plugins-silero
 livekit-plugins-openai
 livekit-plugins-deepgram
 livekit-plugins-google
 livekit-plugins-turn-detector
-google-api-python-client
+
+# ==============================
+# Google Cloud (TTS Auth)
+# ==============================
+google-cloud-texttospeech
 google-auth
-openai
+
+# ==============================
+# Environment
+# ==============================
 python-dotenv
-pydantic
