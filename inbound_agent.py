@@ -364,12 +364,37 @@ async def entrypoint(ctx: JobContext):
     )
 
     def on_conversation_item(ev):
+        item = ev.item
+
+        # Safely extract role
+        role = getattr(item, "role", "unknown")
+
+        # Safely extract content
+        content = getattr(item, "content", None)
+        if not content:
+            return
+
+        # Join only string parts (ignore tool metadata parts)
         text = "".join(
-            part for part in ev.item.content if isinstance(part, str)
+            part for part in content
+            if isinstance(part, str)
         ).strip()
 
-        if text:
-            transcript.append({"role": ev.item.role, "content": text})
+        if not text:
+            return
+
+        # Store transcript
+        transcript.append({
+            "role": role,
+            "content": text
+        })
+
+        # Log cleanly
+        logger.info(
+            "SPEECH | role=%s | text=%s",
+            role,
+            text
+        )
 
     session.on("conversation_item_added", on_conversation_item)
 
