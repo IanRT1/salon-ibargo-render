@@ -21,6 +21,8 @@ from livekit.plugins import silero
 from livekit.plugins import openai
 from livekit.plugins import deepgram
 from livekit.plugins.google import tts as google_tts
+from livekit.agents import AutoSubscribe
+
 
 from actions import (
     multiplica_numeros,
@@ -128,8 +130,12 @@ async def entrypoint(ctx: JobContext):
 
     transcript: list[dict[str, str]] = []
 
-    # ✅ Connect FIRST so the room + media is actually established
-    await ctx.connect()
+    # Connect and subscribe to audio
+    await ctx.connect(auto_subscribe=AutoSubscribe.AUDIO_ONLY)
+
+    # 🔥 WAIT FOR THE SIP PARTICIPANT
+    participant = await ctx.wait_for_participant()
+    logger.info(f"SIP participant joined: {participant.identity}")
 
     session = AgentSession(
         stt=deepgram.STT(model="nova-3"),
