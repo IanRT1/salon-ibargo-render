@@ -54,15 +54,23 @@ load_dotenv(BASE_DIR / ".env")
 
 service_account_json = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON")
 
-if not service_account_json:
-    raise RuntimeError("GOOGLE_SERVICE_ACCOUNT_JSON not set")
+if service_account_json:
+    # Production (Render)
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".json") as tmp:
+        tmp.write(service_account_json.encode())
+        tmp.flush()
+        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = tmp.name
+else:
+    # Local fallback
+    local_creds = BASE_DIR / "service_account.json"
 
-# Write credentials JSON to a temporary file and point
-# GOOGLE_APPLICATION_CREDENTIALS to it so Google TTS works
-with tempfile.NamedTemporaryFile(delete=False, suffix=".json") as tmp:
-    tmp.write(service_account_json.encode())
-    tmp.flush()
-    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = tmp.name
+    if not local_creds.exists():
+        raise RuntimeError(
+            "No Google credentials found. "
+            "Set GOOGLE_SERVICE_ACCOUNT_JSON or provide service_account.json locally."
+        )
+
+    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = str(local_creds)
 
 
 # =====================================================
@@ -95,9 +103,9 @@ async def multiplica_numeros(
     number1: int,
     number2: int,
 ) -> str:
-
+    
     call_id = context.session.userdata.get("call_id")
-
+    
     payload = {
         "call_id": call_id,
         "number1": number1,
@@ -116,6 +124,12 @@ async def agendar_cita_disponibilidad(
     visit_time: str,
     purpose: str,
 ) -> str:
+    
+    await context.session.say(
+        "Espera un momento mientras verifico la disponibilidad para esa fecha y hora...",
+        allow_interruptions=True,
+    )
+
 
     call_id = context.session.userdata.get("call_id")
 
@@ -142,7 +156,13 @@ async def cotizar_evento(
     fecha_tentativa: str,
     numero_invitados: int,
 ) -> str:
+    
+    await context.session.say(
+        "Un momento, por favor. Estoy preparando una cotización para tu evento...",
+        allow_interruptions=True,
+    )
 
+    
     call_id = context.session.userdata.get("call_id")
 
     payload = {
