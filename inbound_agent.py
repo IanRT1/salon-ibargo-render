@@ -3,6 +3,8 @@ import os
 import secrets
 import asyncio
 import httpx
+import tempfile
+import json
 
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -44,6 +46,23 @@ logger = logging.getLogger("inbound_agent")
 
 BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
+
+
+# =====================================================
+# GOOGLE SERVICE ACCOUNT BOOTSTRAP (REQUIRED FOR RENDER)
+# =====================================================
+
+service_account_json = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON")
+
+if not service_account_json:
+    raise RuntimeError("GOOGLE_SERVICE_ACCOUNT_JSON not set")
+
+# Write credentials JSON to a temporary file and point
+# GOOGLE_APPLICATION_CREDENTIALS to it so Google TTS works
+with tempfile.NamedTemporaryFile(delete=False, suffix=".json") as tmp:
+    tmp.write(service_account_json.encode())
+    tmp.flush()
+    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = tmp.name
 
 
 # =====================================================
@@ -110,7 +129,6 @@ async def agendar_cita_disponibilidad(
 
     result = await call_automation("/salon_ibargo_agendar_cita_disponibilidad", payload)
 
-    # If backend confirms visit, store it locally for after-call forwarding
     if result.get("confirmed_visit"):
         context.session.userdata["confirmed_visit"] = result["confirmed_visit"]
 
@@ -201,10 +219,6 @@ async def entrypoint(ctx: JobContext):
             transcript.append({"role": ev.item.role, "content": text})
 
     session.on("conversation_item_added", on_conversation_item)
-
-    # =====================================================
-    # AFTER CALL → FORWARD TO BANDIA TOOLKIT
-    # =====================================================
 
     async def on_shutdown(reason: str):
 
