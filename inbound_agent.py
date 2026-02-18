@@ -341,8 +341,12 @@ async def entrypoint(ctx: JobContext):
 
     current_time_str = get_current_time_spanish_pst()
 
-    GENERAL_INSTRUCTIONS = raw_instructions.format(
-        current_time=current_time_str
+    class SafeDict(dict):
+        def __missing__(self, key):
+            return "{" + key + "}"
+
+    GENERAL_INSTRUCTIONS = raw_instructions.format_map(
+        SafeDict(current_time=current_time_str)
     )
 
     session = AgentSession(
