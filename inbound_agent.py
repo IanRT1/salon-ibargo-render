@@ -2,6 +2,7 @@ import logging
 import os
 import secrets
 import tempfile
+import asyncio
 
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -64,27 +65,12 @@ with tempfile.NamedTemporaryFile(delete=False, suffix=".json") as tmp:
     os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = tmp.name
 
 
-# -------------------------------------------------
-# Timezone
-# -------------------------------------------------
-
 PST = ZoneInfo("America/Los_Angeles")
 
 
 # -------------------------------------------------
-# Instructions loader
+# Utilities
 # -------------------------------------------------
-
-class SafeFormatDict(dict):
-    def __missing__(self, key):
-        return "{" + key + "}"
-
-
-def load_instructions(variables: dict | None = None) -> str:
-    instructions_path = BASE_DIR / "instructions.txt"
-    template = instructions_path.read_text(encoding="utf-8")
-    return template if not variables else template.format_map(SafeFormatDict(variables))
-
 
 def generate_call_id() -> str:
     ts = datetime.utcnow().strftime("%Y%m%d%H%M%S")
@@ -92,24 +78,16 @@ def generate_call_id() -> str:
     return f"call_{ts}_{rand}"
 
 
-# -------------------------------------------------
-# Agent Definition
-# -------------------------------------------------
-
 class Assistant(Agent):
     multiplica_numeros = multiplica_numeros
     agendar_cita_disponibilidad = agendar_cita_disponibilidad
     cotizar_evento = cotizar_evento
 
 
-# -------------------------------------------------
-# Prewarm (LESS STRICT VAD)
-# -------------------------------------------------
-
 def prewarm(proc: JobProcess):
-    logger.info("Loading VAD (less strict config)")
+    logger.info("Loading VAD")
     proc.userdata["vad"] = silero.VAD.load(
-        activation_threshold=0.5,       # was 0.75
+        activation_threshold=0.5,
         min_speech_duration=0.15,
         min_silence_duration=0.3,
     )
@@ -129,18 +107,16 @@ async def entrypoint(ctx: JobContext):
     transcript: list[dict[str, str]] = []
 
     await ctx.connect(auto_subscribe=AutoSubscribe.AUDIO_ONLY)
-
     participant = await ctx.wait_for_participant()
-    logger.info(f"SIP participant joined: {participant.identity}")
-
+    logger.info("SIP participant joined: %s", participant.identity)
 
     session = AgentSession(
         stt=deepgram.STT(
-        model="nova-3",
-        language="es",
-        punctuate=True,
-        smart_format=True,
-        interim_results=True,
+            model="nova-3",
+            language="es",
+            punctuate=True,
+            smart_format=True,
+            interim_results=True,
         ),
         llm=openai.LLM(
             model="gpt-5.2",
@@ -150,68 +126,49 @@ async def entrypoint(ctx: JobContext):
             language="es-US",
             voice_name="es-US-Chirp3-HD-Achernar",
             model_name="chirp_3",
-            speaking_rate=1.05,
-            sample_rate=24000,
-            pitch=0.0,
         ),
         vad=ctx.proc.userdata["vad"],
         userdata=ctx.proc.userdata,
         preemptive_generation=True,
     )
 
-    # -------------------------------------------------
-    # Debug logging for conversation events
-    # -------------------------------------------------
-
     def on_conversation_item(ev):
-        logger.info("Conversation event role=%s", ev.item.role)
-
         text = "".join(
             part for part in ev.item.content if isinstance(part, str)
         ).strip()
 
         if text:
-            logger.info("Transcription captured: %s", text)
             transcript.append({"role": ev.item.role, "content": text})
 
     session.on("conversation_item_added", on_conversation_item)
 
-    # -------------------------------------------------
-    # Shutdown
-    # -------------------------------------------------
+    # ------------------------------
+    # Shutdown (NON BLOCKING)
+    # ------------------------------
 
     async def on_shutdown(reason: str):
-        logger.info("Shutdown triggered. Reason=%s", reason)
+        logger.info("Shutdown triggered")
 
-        await handle_after_call(
-            call_id=call_id,
-            call_started_at=call_started_at,
-            transcript=transcript,
-            session_userdata=ctx.proc.userdata,
+        asyncio.create_task(
+            handle_after_call(
+                call_id=call_id,
+                call_started_at=call_started_at,
+                transcript=transcript,
+                session_userdata=ctx.proc.userdata,
+            )
         )
 
     ctx.add_shutdown_callback(on_shutdown)
 
-    # -------------------------------------------------
-    # Start agent
-    # -------------------------------------------------
+    agent = Assistant(instructions="")
 
-    agent = Assistant(instructions=load_instructions())
-
-    await session.start(
-        agent=agent,
-        room=ctx.room,
-    )
-
-    logger.info("Agent session started successfully")
+    await session.start(agent=agent, room=ctx.room)
 
     await session.say(
-        "Hola, soy Mia. Estás llamando al salón Ibargo. ¿En qué puedo ayudarte?",
+        "Hola, soy Mia. ¿En qué puedo ayudarte?",
         allow_interruptions=True,
     )
 
-    logger.info("Greeting sent")
-    
 
 # -------------------------------------------------
 # Main
