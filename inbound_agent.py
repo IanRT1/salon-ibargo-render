@@ -143,36 +143,25 @@ async def end_call(
 ) -> str:
     """
     Usa esta función únicamente cuando la conversación haya terminado de forma natural.
-
-    Llama esta función cuando:
-    - El cliente se despida.
-    - El cliente confirme que no necesita nada más.
-    - La conversación haya llegado claramente a su cierre.
-
-    Antes de llamar esta función:
-    - Despídete de manera natural.
-    - No anuncies que vas a colgar.
-    - No expliques que estás ejecutando una función.
-
-    No la uses en medio de la conversación.
-    No la uses si aún hay información pendiente.
     """
 
     logger.info("end_call triggered. reason=%s", reason)
 
+    # Speak closing message
     await context.session.say(
         "Gracias por llamar a Salon Ibargo. Que tengas excelente día.",
         allow_interruptions=False,
     )
 
-    await asyncio.sleep(8)
+    # Small buffer
+    await asyncio.sleep(5)
+
+    room_name = context.session.userdata.get("room_name")
+    identity = context.session.userdata.get("participant_identity")
+
+    lkapi = api.LiveKitAPI()
 
     try:
-        lkapi = api.LiveKitAPI()
-
-        room_name = context.session.userdata.get("room_name")
-        identity = context.session.userdata.get("participant_identity")
-
         await lkapi.room.remove_participant(
             api.RoomParticipantIdentity(
                 room=room_name,
@@ -180,15 +169,16 @@ async def end_call(
             )
         )
 
-        logger.info(
-            "Successfully hung up participant %s",
-            context.session.participant.identity,
-        )
+        logger.info("Successfully hung up participant %s", identity)
 
     except Exception as e:
         logger.warning("Error while ending call: %s", e)
 
+    finally:
+        await lkapi.aclose()
+
     return "Call ended."
+
 
 
 @function_tool()
