@@ -172,7 +172,10 @@ async def end_call(
         logger.info("Successfully hung up participant %s", identity)
 
     except Exception as e:
-        logger.warning("Error while ending call: %s", e)
+        if "not_found" in str(e):
+            logger.info("Participant already disconnected.")
+        else:
+            logger.warning("Error while ending call: %s", e)
 
     finally:
         await lkapi.aclose()
