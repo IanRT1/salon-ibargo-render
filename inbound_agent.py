@@ -38,12 +38,8 @@ AUTOMATION_BASE_URL = "https://bandia-toolkit.onrender.com"
 
 PST = ZoneInfo("America/Los_Angeles")
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-)
-
 logger = logging.getLogger("inbound_agent")
+logger.setLevel(logging.INFO)
 
 BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
@@ -234,7 +230,7 @@ async def agendar_cita_disponibilidad(
     """
 
     await context.session.say(
-        "Espera un momento mientras verifico la disponibilidad para esa fecha y hora...",
+        "Gracias por proporcionar los datos para agendar tu cita. Espera un momento mientras verifico la disponibilidad para esa fecha y hora...",
         allow_interruptions=True,
     )
 
