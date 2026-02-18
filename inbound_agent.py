@@ -195,10 +195,11 @@ async def multiplica_numeros(
     Solo úsala si el cliente pide directamente una multiplicación.
     """
 
-    call_id = context.session.userdata.get("call_id")
+    call_id = context.session.userdata.get("conversation_id")
 
     payload = {
-        "call_id": call_id,
+        "conversation_id": call_id,
+        "channel": "voice",
         "number1": number1,
         "number2": number2,
     }
@@ -234,10 +235,11 @@ async def agendar_cita_disponibilidad(
         allow_interruptions=True,
     )
 
-    call_id = context.session.userdata.get("call_id")
+    call_id = context.session.userdata.get("conversation_id")
 
     payload = {
-        "call_id": call_id,
+        "conversation_id": call_id,
+        "channel": "voice",
         "name": name,
         "visit_date": visit_date,
         "visit_time": visit_time,
@@ -276,10 +278,11 @@ async def cotizar_evento(
         allow_interruptions=True,
     )
 
-    call_id = context.session.userdata.get("call_id")
+    call_id = context.session.userdata.get("conversation_id")
 
     payload = {
-        "call_id": call_id,
+        "conversation_id": call_id,
+        "channel": "voice",
         "tipo_evento": tipo_evento,
         "fecha_tentativa": fecha_tentativa,
         "numero_invitados": numero_invitados,
@@ -313,8 +316,8 @@ def prewarm(proc: JobProcess):
 
 async def entrypoint(ctx: JobContext):
 
-    call_id = generate_call_id()
-    ctx.proc.userdata["call_id"] = call_id
+    conversation_id  = generate_call_id()
+    ctx.proc.userdata["conversation_id"] = conversation_id 
 
     call_started_at = datetime.now(tz=PST)
     transcript: list[dict[str, str]] = []
@@ -397,9 +400,10 @@ async def entrypoint(ctx: JobContext):
     async def on_shutdown(reason: str):
 
         payload = {
-            "call_id": call_id,
-            "call_started_at": call_started_at.strftime("%Y-%m-%d %H:%M:%S"),
-            "call_ended_at": datetime.now(tz=PST).strftime("%Y-%m-%d %H:%M:%S"),
+            "conversation_id": conversation_id,
+            "channel": "voice",
+            "conversation_started_at": call_started_at.strftime("%Y-%m-%d %H:%M:%S"),
+            "conversation_ended_at": datetime.now(tz=PST).strftime("%Y-%m-%d %H:%M:%S"),
             "transcript": transcript,
             "confirmed_visit": ctx.proc.userdata.get("confirmed_visit"),
         }
