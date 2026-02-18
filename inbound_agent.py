@@ -133,8 +133,15 @@ async def entrypoint(ctx: JobContext):
     participant = await ctx.wait_for_participant()
     logger.info(f"SIP participant joined: {participant.identity}")
 
+
     session = AgentSession(
-        stt=deepgram.STT(model="nova-3"),
+        stt=deepgram.STT(
+        model="nova-3",
+        language="es",
+        punctuate=True,
+        smart_format=True,
+        interim_results=True,
+        ),
         llm=openai.LLM(
             model="gpt-5.2",
             api_key=os.environ.get("OPENAI_API_KEY"),
