@@ -55,10 +55,19 @@ class TranscriptItem(BaseModel):
 # Helpers
 # -------------------------------------------------
 
-def transcript_to_single_line(transcript: List[TranscriptItem]) -> str:
+def transcript_to_single_line(transcript: list[dict]) -> str:
+    """
+    Expects:
+    [
+        {"role": "user" | "assistant", "content": "text"},
+        ...
+    ]
+    """
+
     return " | ".join(
-        f"{item.role.upper()}: {item.content.replace('\n', ' ').strip()}"
+        f"{item['role'].upper()}: {item['content'].replace('\n', ' ').strip()}"
         for item in transcript
+        if item.get("content")
     )
 
 def extract_text(response) -> str:
