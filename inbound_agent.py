@@ -15,14 +15,13 @@ from livekit.agents import (
     JobProcess,
     WorkerOptions,
     cli,
+    AutoSubscribe,
 )
 
 from livekit.plugins import silero
 from livekit.plugins import openai
 from livekit.plugins import deepgram
 from livekit.plugins.google import tts as google_tts
-from livekit.agents import AutoSubscribe
-
 
 from actions import (
     multiplica_numeros,
@@ -127,16 +126,16 @@ async def entrypoint(ctx: JobContext):
     ctx.proc.userdata["call_id"] = call_id
 
     call_started_at = datetime.now(tz=PST)
-
     transcript: list[dict[str, str]] = []
 
     # Connect and subscribe to audio
     await ctx.connect(auto_subscribe=AutoSubscribe.AUDIO_ONLY)
 
-    # 🔥 WAIT FOR THE SIP PARTICIPANT
+    # Wait for SIP participant
     participant = await ctx.wait_for_participant()
     logger.info(f"SIP participant joined: {participant.identity}")
 
+    # Create session
     session = AgentSession(
         stt=deepgram.STT(model="nova-3"),
         llm=openai.LLM(
@@ -156,7 +155,7 @@ async def entrypoint(ctx: JobContext):
         preemptive_generation=True,
     )
 
-    # Transcript capture (YOUR exact style)
+    # Transcript capture
     def on_conversation_item(ev):
         text = "".join(
             part for part in ev.item.content if isinstance(part, str)
@@ -178,13 +177,15 @@ async def entrypoint(ctx: JobContext):
 
     ctx.add_shutdown_callback(on_shutdown)
 
-    # Start agent session
+    # 🔥 FIXED HERE — keyword argument
+    agent = Assistant(instructions=load_instructions())
+
     await session.start(
-        agent=Assistant(load_instructions()),
+        agent=agent,
         room=ctx.room,
     )
 
-    # ✅ MUST await say()
+    # Speak greeting
     await session.say(
         "Hola, soy Mia. Estás llamando al salón Ibargo. ¿En qué puedo ayudarte?",
         allow_interruptions=True,
@@ -192,7 +193,7 @@ async def entrypoint(ctx: JobContext):
 
 
 # -------------------------------------------------
-# Entrypoint
+# Main
 # -------------------------------------------------
 
 if __name__ == "__main__":
