@@ -45,11 +45,14 @@ logger = logging.getLogger("inbound_agent")
 
 
 # -------------------------------------------------
-# Environment & Credentials
+# Environment
 # -------------------------------------------------
 
 BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
+
+logger.info("OPENAI_API_KEY present: %s", bool(os.environ.get("OPENAI_API_KEY")))
+logger.info("DEEPGRAM_API_KEY present: %s", bool(os.environ.get("DEEPGRAM_API_KEY")))
 
 service_account_json = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON")
 if not service_account_json:
@@ -80,11 +83,7 @@ class SafeFormatDict(dict):
 def load_instructions(variables: dict | None = None) -> str:
     instructions_path = BASE_DIR / "instructions.txt"
     template = instructions_path.read_text(encoding="utf-8")
-
-    if not variables:
-        return template
-
-    return template.format_map(SafeFormatDict(variables))
+    return template if not variables else template.format_map(SafeFormatDict(variables))
 
 
 def generate_call_id() -> str:
@@ -104,19 +103,20 @@ class Assistant(Agent):
 
 
 # -------------------------------------------------
-# Prewarm
+# Prewarm (LESS STRICT VAD)
 # -------------------------------------------------
 
 def prewarm(proc: JobProcess):
+    logger.info("Loading VAD (less strict config)")
     proc.userdata["vad"] = silero.VAD.load(
-        activation_threshold=0.75,
-        min_speech_duration=0.2,
-        min_silence_duration=0.5,
+        activation_threshold=0.5,       # was 0.75
+        min_speech_duration=0.15,
+        min_silence_duration=0.3,
     )
 
 
 # -------------------------------------------------
-# Entrypoint (Inbound)
+# Entrypoint
 # -------------------------------------------------
 
 async def entrypoint(ctx: JobContext):
@@ -128,14 +128,11 @@ async def entrypoint(ctx: JobContext):
     call_started_at = datetime.now(tz=PST)
     transcript: list[dict[str, str]] = []
 
-    # Connect and subscribe to audio
     await ctx.connect(auto_subscribe=AutoSubscribe.AUDIO_ONLY)
 
-    # Wait for SIP participant
     participant = await ctx.wait_for_participant()
     logger.info(f"SIP participant joined: {participant.identity}")
 
-    # Create session
     session = AgentSession(
         stt=deepgram.STT(model="nova-3"),
         llm=openai.LLM(
@@ -155,19 +152,30 @@ async def entrypoint(ctx: JobContext):
         preemptive_generation=True,
     )
 
-    # Transcript capture
+    # -------------------------------------------------
+    # Debug logging for conversation events
+    # -------------------------------------------------
+
     def on_conversation_item(ev):
+        logger.info("Conversation event role=%s", ev.item.role)
+
         text = "".join(
             part for part in ev.item.content if isinstance(part, str)
         ).strip()
 
         if text:
+            logger.info("Transcription captured: %s", text)
             transcript.append({"role": ev.item.role, "content": text})
 
     session.on("conversation_item_added", on_conversation_item)
 
-    # Shutdown handler
+    # -------------------------------------------------
+    # Shutdown
+    # -------------------------------------------------
+
     async def on_shutdown(reason: str):
+        logger.info("Shutdown triggered. Reason=%s", reason)
+
         await handle_after_call(
             call_id=call_id,
             call_started_at=call_started_at,
@@ -177,7 +185,10 @@ async def entrypoint(ctx: JobContext):
 
     ctx.add_shutdown_callback(on_shutdown)
 
-    # 🔥 FIXED HERE — keyword argument
+    # -------------------------------------------------
+    # Start agent
+    # -------------------------------------------------
+
     agent = Assistant(instructions=load_instructions())
 
     await session.start(
@@ -185,12 +196,15 @@ async def entrypoint(ctx: JobContext):
         room=ctx.room,
     )
 
-    # Speak greeting
+    logger.info("Agent session started successfully")
+
     await session.say(
         "Hola, soy Mia. Estás llamando al salón Ibargo. ¿En qué puedo ayudarte?",
         allow_interruptions=True,
     )
 
+    logger.info("Greeting sent")
+    
 
 # -------------------------------------------------
 # Main
