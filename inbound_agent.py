@@ -421,7 +421,7 @@ async def entrypoint(ctx: JobContext):
     await session.start(agent=agent, room=ctx.room)
 
     await session.say(
-        "Hola, soy Mia. ¿En qué puedo ayudarte?",
+        "Hola, soy Mia de salon de eventos Ibargo. ¿En qué puedo ayudarte?",
         allow_interruptions=True,
     )
 
