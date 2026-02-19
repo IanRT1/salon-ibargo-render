@@ -232,7 +232,7 @@ async def agendar_cita_disponibilidad(
 
     await context.session.say(
         "Gracias por proporcionar los datos para agendar tu cita. Espera un momento mientras verifico la disponibilidad para esa fecha y hora...",
-        allow_interruptions=True,
+        allow_interruptions=False,
     )
 
     call_id = context.session.userdata.get("conversation_id")
