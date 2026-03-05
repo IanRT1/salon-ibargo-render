@@ -29,14 +29,18 @@ from livekit.plugins import deepgram
 from livekit.plugins.google import tts as google_tts
 from livekit import api
 
+from utils import (
+    generate_call_id,
+    call_automation,
+    get_current_time_spanish_pst,
+    PST,
+)
+
 
 # =====================================================
 # CONFIG
 # =====================================================
 
-AUTOMATION_BASE_URL = "https://bandia-toolkit-qwt3.onrender.com"
-
-PST = ZoneInfo("America/Los_Angeles")
 
 logger = logging.getLogger("inbound_agent")
 logger.setLevel(logging.INFO)
@@ -70,62 +74,6 @@ else:
         )
 
     os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = str(local_creds)
-
-
-# =====================================================
-# UTILITIES
-# =====================================================
-
-def generate_call_id() -> str:
-    ts = datetime.utcnow().strftime("%Y%m%d%H%M%S")
-    rand = secrets.token_hex(4)
-    return f"call_{ts}_{rand}"
-
-
-async def call_automation(endpoint: str, payload: dict):
-    async with httpx.AsyncClient(timeout=60) as client:
-        response = await client.post(
-            f"{AUTOMATION_BASE_URL}{endpoint}",
-            json=payload,
-        )
-        response.raise_for_status()
-        return response.json()
-
-def get_current_time_spanish_pst() -> str:
-    now = datetime.now(tz=PST)
-
-    dias = [
-        "lunes", "martes", "miércoles", "jueves",
-        "viernes", "sábado", "domingo"
-    ]
-
-    meses = [
-        "enero", "febrero", "marzo", "abril", "mayo", "junio",
-        "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"
-    ]
-
-    dia_semana = dias[now.weekday()]
-    dia = now.day
-    mes = meses[now.month - 1]
-    año = now.year
-
-    # Convert to 12-hour format
-    hora = now.hour
-    minutos = now.minute
-
-    hora_12 = hora % 12
-    if hora_12 == 0:
-        hora_12 = 12
-
-    # Determine period in natural Spanish
-    if 0 <= hora < 12:
-        periodo = "de la mañana"
-    elif 12 <= hora < 19:
-        periodo = "de la tarde"
-    else:
-        periodo = "de la noche"
-
-    return f"{dia_semana.capitalize()} {dia} de {mes}, {año}, {hora_12}:{minutos:02d} {periodo}"
 
 
 # =====================================================
@@ -179,35 +127,6 @@ async def end_call(
     return "Call ended."
 
 
-
-@function_tool()
-async def multiplica_numeros(
-    context: RunContext,
-    number1: int,
-    number2: int,
-) -> str:
-    """
-    Usa esta función solo cuando el cliente solicite explícitamente
-    multiplicar dos números.
-
-    No la uses como ejemplo.
-    No la uses para cálculos internos.
-    Solo úsala si el cliente pide directamente una multiplicación.
-    """
-
-    call_id = context.session.userdata.get("conversation_id")
-
-    payload = {
-        "conversation_id": call_id,
-        "channel": "voice",
-        "number1": number1,
-        "number2": number2,
-    }
-
-    result = await call_automation("/salon_ibargo_multiplica_numeros", payload)
-    return result["message"]
-
-
 @function_tool()
 async def agendar_cita_disponibilidad(
     context: RunContext,
@@ -230,11 +149,6 @@ async def agendar_cita_disponibilidad(
     Solo ejecútala cuando toda la información esté confirmada.
     """
 
-    await context.session.say(
-        "Gracias por proporcionar los datos para agendar tu cita. Espera un momento mientras verifico la disponibilidad para esa fecha y hora...",
-        allow_interruptions=False,
-    )
-
     call_id = context.session.userdata.get("conversation_id")
 
     payload = {
@@ -246,50 +160,73 @@ async def agendar_cita_disponibilidad(
         "purpose": purpose,
     }
 
-    result = await call_automation("/salon_ibargo_agendar_cita_disponibilidad", payload)
+    api_task = None
 
-    if result.get("confirmed_visit"):
-        context.session.userdata["confirmed_visit"] = result["confirmed_visit"]
+    try:
+        # Start API immediately
+        api_task = asyncio.create_task(
+            call_automation(
+                "/salon_ibargo_agendar_cita_disponibilidad",
+                payload,
+            )
+        )
 
-    return result["message"]
+        # Speak while backend runs
+        await context.session.say(
+            "Gracias por proporcionar los datos para agendar tu cita. "
+            "Espera un momento mientras verifico tus datos para mayor precisión",
+            allow_interruptions=False,
+        )
 
+        result = await asyncio.wait_for(api_task, timeout=20)
 
-@function_tool()
-async def cotizar_evento(
-    context: RunContext,
-    tipo_evento: str,
-    fecha_tentativa: str,
-    numero_invitados: int,
-) -> str:
-    """
-    Usa esta función únicamente cuando ya tengas confirmados:
-    - Tipo de evento
-    - Fecha tentativa
-    - Número aproximado de invitados
+        if not isinstance(result, dict):
+            logger.error("Invalid API response: %s", result)
+            return "Lo siento, ocurrió un problema al verificar la disponibilidad."
 
-    Esta función genera una cotización estimada.
+        if result.get("confirmed_visit"):
+            context.session.userdata["confirmed_visit"] = result["confirmed_visit"]
 
-    No la uses si falta alguno de los datos.
-    No menciones precios antes de ejecutar esta función.
-    """
+        message = result.get("message")
 
-    await context.session.say(
-        "Un momento, por favor. Estoy preparando una cotización para tu evento...",
-        allow_interruptions=True,
-    )
+        if not message:
+            logger.error("API response missing message: %s", result)
+            return "Hubo un problema al confirmar la cita."
 
-    call_id = context.session.userdata.get("conversation_id")
+        return message
 
-    payload = {
-        "conversation_id": call_id,
-        "channel": "voice",
-        "tipo_evento": tipo_evento,
-        "fecha_tentativa": fecha_tentativa,
-        "numero_invitados": numero_invitados,
-    }
+    except httpx.HTTPStatusError as e:
+        # Backend returned 4xx / 5xx
+        try:
+            error_json = e.response.json()
+            detail = error_json.get("detail")
 
-    result = await call_automation("/salon_ibargo_cotizar_evento", payload)
-    return result["message"]
+            if detail:
+                logger.info("API returned detail: %s", detail)
+                return detail
+
+        except Exception:
+            logger.exception("Failed to parse error response")
+
+        logger.warning("HTTP error from appointment API: %s", e)
+        return "Lo siento, ocurrió un problema al verificar la disponibilidad."
+
+    except asyncio.TimeoutError:
+        logger.warning("Appointment API timed out")
+        return (
+            "Lo siento, el sistema está tardando más de lo esperado "
+            "en verificar la disponibilidad."
+        )
+
+    except Exception:
+        logger.exception("Unexpected error in agendar_cita_disponibilidad")
+        return (
+            "Lo siento, ocurrió un problema al verificar la disponibilidad."
+        )
+
+    finally:
+        if api_task and not api_task.done():
+            api_task.cancel()
 
 
 # =====================================================
@@ -297,9 +234,7 @@ async def cotizar_evento(
 # =====================================================
 
 class Assistant(Agent):
-    multiplica_numeros = multiplica_numeros
     agendar_cita_disponibilidad = agendar_cita_disponibilidad
-    cotizar_evento = cotizar_evento
     end_call = end_call
 
 def prewarm(proc: JobProcess):
