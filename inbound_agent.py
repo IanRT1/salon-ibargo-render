@@ -262,8 +262,10 @@ async def entrypoint(ctx: JobContext):
 
     logger.info("Participant attributes: %s", participant.attributes)
 
-    caller_number = participant.attributes.get("sip.from_phone_number")
-    to_number = participant.attributes.get("sip.to_phone_number")
+    attrs = participant.attributes or {}
+
+    caller_number = attrs.get("sip.phoneNumber")
+    to_number = attrs.get("sip.trunkPhoneNumber")
 
     ctx.proc.userdata["from_phone_number"] = caller_number
     ctx.proc.userdata["to_phone_number"] = to_number
