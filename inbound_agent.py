@@ -260,6 +260,20 @@ async def entrypoint(ctx: JobContext):
     await ctx.connect(auto_subscribe=AutoSubscribe.AUDIO_ONLY)
     participant = await ctx.wait_for_participant()
 
+    logger.info("Participant attributes: %s", participant.attributes)
+
+    caller_number = participant.attributes.get("sip.from_phone_number")
+    to_number = participant.attributes.get("sip.to_phone_number")
+
+    ctx.proc.userdata["from_phone_number"] = caller_number
+    ctx.proc.userdata["to_phone_number"] = to_number
+
+    logger.info(
+        "Call metadata | from=%s | to=%s",
+        caller_number,
+        to_number,
+    )
+
     ctx.proc.userdata["participant_identity"] = participant.identity
     ctx.proc.userdata["room_name"] = ctx.room.name
 
@@ -337,6 +351,8 @@ async def entrypoint(ctx: JobContext):
         payload = {
             "conversation_id": conversation_id,
             "channel": "voice",
+            "from_phone_number": ctx.proc.userdata.get("from_phone_number"),
+            "to_phone_number": ctx.proc.userdata.get("to_phone_number"),
             "conversation_started_at": call_started_at.strftime("%Y-%m-%d %H:%M:%S"),
             "conversation_ended_at": datetime.now(tz=PST).strftime("%Y-%m-%d %H:%M:%S"),
             "transcript": transcript,
