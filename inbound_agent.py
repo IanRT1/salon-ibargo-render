@@ -266,9 +266,11 @@ async def entrypoint(ctx: JobContext):
 
     caller_number = attrs.get("sip.phoneNumber")
     to_number = attrs.get("sip.trunkPhoneNumber")
+    call_sid = attrs.get("sip.twilio.callSid") 
 
     ctx.proc.userdata["from_phone_number"] = caller_number
     ctx.proc.userdata["to_phone_number"] = to_number
+    ctx.proc.userdata["call_sid"] = call_sid
 
     logger.info(
         "Call metadata | from=%s | to=%s",
@@ -357,6 +359,7 @@ async def entrypoint(ctx: JobContext):
             "to_phone_number": ctx.proc.userdata.get("to_phone_number"),
             "conversation_started_at": call_started_at.strftime("%Y-%m-%d %H:%M:%S"),
             "conversation_ended_at": datetime.now(tz=PST).strftime("%Y-%m-%d %H:%M:%S"),
+            "call_sid": ctx.proc.userdata.get("call_sid"),
             "transcript": transcript,
             "confirmed_visit": ctx.proc.userdata.get("confirmed_visit"),
         }
