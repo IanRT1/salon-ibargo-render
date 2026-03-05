@@ -34,7 +34,7 @@ from livekit import api
 # CONFIG
 # =====================================================
 
-AUTOMATION_BASE_URL = "https://bandia-toolkit.onrender.com"
+AUTOMATION_BASE_URL = "https://bandia-toolkit-qwt3.onrender.com"
 
 PST = ZoneInfo("America/Los_Angeles")
 
