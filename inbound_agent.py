@@ -363,6 +363,8 @@ async def entrypoint(ctx: JobContext):
             "transcript": transcript,
             "confirmed_visit": ctx.proc.userdata.get("confirmed_visit"),
         }
+        
+        logger.info("on_shutdown payload: %s", payload)
 
         try:
             await call_automation("/salon_ibargo_after_call", payload)
