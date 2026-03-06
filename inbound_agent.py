@@ -251,49 +251,77 @@ def prewarm(proc: JobProcess):
 
 async def entrypoint(ctx: JobContext):
 
-    conversation_id  = generate_call_id()
-    ctx.proc.userdata["conversation_id"] = conversation_id 
-    watchdog_task = None
+    # ── Init ──────────────────────────────────────────────────────────────────
 
-    call_started_at = datetime.now(tz=PST)
+    conversation_id = generate_call_id()
+    ctx.proc.userdata["conversation_id"] = conversation_id
+    watchdog_task = None
     transcript: list[dict[str, str]] = []
 
-    await ctx.connect(auto_subscribe=AutoSubscribe.AUDIO_ONLY)
-    participant = await ctx.wait_for_participant()
+    # ── Connect ───────────────────────────────────────────────────────────────
 
-    logger.info("Participant attributes: %s", participant.attributes)
+    await ctx.connect(auto_subscribe=AutoSubscribe.AUDIO_ONLY)
+    call_started_at = datetime.now(tz=PST)
+
+    # ── Ghost call guard ──────────────────────────────────────────────────────
+
+    try:
+        participant = await ctx.wait_for_participant()
+    except RuntimeError as e:
+        if "room disconnected" in str(e).lower():
+            logger.info("entrypoint: ghost call — caller disconnected before joining")
+            try:
+                await call_automation("/salon_ibargo_after_call", {
+                    "conversation_id": conversation_id,
+                    "channel": "voice",
+                    "from_phone_number": None,
+                    "to_phone_number": None,
+                    "conversation_started_at": call_started_at.strftime("%Y-%m-%d %H:%M:%S"),
+                    "conversation_ended_at": datetime.now(tz=PST).strftime("%Y-%m-%d %H:%M:%S"),
+                    "call_sid": None,
+                    "transcript": [],
+                    "confirmed_visit": None,
+                })
+            except Exception:
+                logger.exception("entrypoint: ghost call after-call forwarding failed")
+            return
+        raise
+
+    # ── Participant metadata ──────────────────────────────────────────────────
+
+    logger.info("entrypoint: participant attributes: %s", participant.attributes)
 
     attrs = participant.attributes or {}
-
     caller_number = attrs.get("sip.phoneNumber")
     to_number = attrs.get("sip.trunkPhoneNumber")
-    call_sid = attrs.get("sip.twilio.callSid") 
+    call_sid = attrs.get("sip.twilio.callSid")
 
     ctx.proc.userdata["from_phone_number"] = caller_number
     ctx.proc.userdata["to_phone_number"] = to_number
     ctx.proc.userdata["call_sid"] = call_sid
-
-    logger.info(
-        "Call metadata | from=%s | to=%s",
-        caller_number,
-        to_number,
-    )
-
     ctx.proc.userdata["participant_identity"] = participant.identity
     ctx.proc.userdata["room_name"] = ctx.room.name
 
-    with open(INSTRUCTIONS_PATH, "r", encoding="utf-8") as f:
-        raw_instructions = f.read()
+    logger.info("entrypoint: call metadata | from=%s | to=%s", caller_number, to_number)
 
-    current_time_str = get_current_time_spanish_pst()
+    # ── Instructions ──────────────────────────────────────────────────────────
+
+    try:
+        with open(INSTRUCTIONS_PATH, "r", encoding="utf-8") as f:
+            raw_instructions = f.read()
+    except OSError:
+        logger.exception("entrypoint: failed to load instructions file")
+        return
 
     class SafeDict(dict):
         def __missing__(self, key):
             return "{" + key + "}"
 
-    GENERAL_INSTRUCTIONS = raw_instructions.format_map(
-        SafeDict(current_time=current_time_str)
+    instructions = raw_instructions.format_map(
+        SafeDict(current_time=get_current_time_spanish_pst())
     )
+
+    # ── Session ───────────────────────────────────────────────────────────────
 
     session = AgentSession(
         stt=deepgram.STT(
@@ -316,18 +344,16 @@ async def entrypoint(ctx: JobContext):
         userdata=ctx.proc.userdata,
     )
 
+    # ── Transcript collector ──────────────────────────────────────────────────
+
     def on_conversation_item(ev):
         item = ev.item
-
-        # Safely extract role
         role = getattr(item, "role", "unknown")
-
-        # Safely extract content
         content = getattr(item, "content", None)
+
         if not content:
             return
 
-        # Join only string parts (ignore tool metadata parts)
         text = "".join(
             part for part in content
             if isinstance(part, str)
@@ -336,23 +362,14 @@ async def entrypoint(ctx: JobContext):
         if not text:
             return
 
-        # Store transcript
-        transcript.append({
-            "role": role,
-            "content": text
-        })
-
-        # Log cleanly
-        logger.info(
-            "SPEECH | role=%s | text=%s",
-            role,
-            text
-        )
+        transcript.append({"role": role, "content": text})
+        logger.info("SPEECH | role=%s | text=%s", role, text)
 
     session.on("conversation_item_added", on_conversation_item)
 
-    async def on_shutdown(reason: str):
+    # ── Shutdown callback ─────────────────────────────────────────────────────
 
+    async def on_shutdown(reason: str):
         if watchdog_task:
             watchdog_task.cancel()
 
@@ -368,20 +385,20 @@ async def entrypoint(ctx: JobContext):
             "confirmed_visit": ctx.proc.userdata.get("confirmed_visit"),
         }
 
-        logger.info("on_shutdown payload: %s", payload)
+        logger.info("on_shutdown: payload: %s", payload)
 
         try:
             await call_automation("/salon_ibargo_after_call", payload)
-            logger.info("After-call forwarded successfully")
+            logger.info("on_shutdown: after-call forwarded successfully")
         except Exception:
-            logger.exception("After-call forwarding failed")
+            logger.exception("on_shutdown: after-call forwarding failed")
 
     ctx.add_shutdown_callback(on_shutdown)
 
-    agent = Assistant(instructions=GENERAL_INSTRUCTIONS)
+    # ── Start agent ───────────────────────────────────────────────────────────
 
+    agent = Assistant(instructions=instructions)
     await session.start(agent=agent, room=ctx.room)
-
     watchdog_task = asyncio.create_task(enforce_max_call_duration(session))
 
     await session.say(
