@@ -253,6 +253,7 @@ async def entrypoint(ctx: JobContext):
 
     conversation_id  = generate_call_id()
     ctx.proc.userdata["conversation_id"] = conversation_id 
+    watchdog_task = None
 
     call_started_at = datetime.now(tz=PST)
     transcript: list[dict[str, str]] = []
@@ -352,6 +353,9 @@ async def entrypoint(ctx: JobContext):
 
     async def on_shutdown(reason: str):
 
+        if watchdog_task:
+            watchdog_task.cancel()
+
         payload = {
             "conversation_id": conversation_id,
             "channel": "voice",
@@ -363,7 +367,7 @@ async def entrypoint(ctx: JobContext):
             "transcript": transcript,
             "confirmed_visit": ctx.proc.userdata.get("confirmed_visit"),
         }
-        
+
         logger.info("on_shutdown payload: %s", payload)
 
         try:
@@ -378,11 +382,52 @@ async def entrypoint(ctx: JobContext):
 
     await session.start(agent=agent, room=ctx.room)
 
+    watchdog_task = asyncio.create_task(enforce_max_call_duration(session))
+
     await session.say(
         "Hola, soy Mia de salon de eventos Ibargo. ¿En qué puedo ayudarte?",
         allow_interruptions=True,
     )
 
+async def enforce_max_call_duration(session: AgentSession):
+
+    MAX_CALL_SECONDS = int(os.getenv("MAX_CALL_SECONDS", 600))
+
+    try:
+        await asyncio.sleep(MAX_CALL_SECONDS)
+
+        logger.info("Max call duration reached. Ending call.")
+
+        try:
+            await session.say(
+                "La llamada ha alcanzado el tiempo máximo permitido. "
+                "Gracias por comunicarte con Salon Ibargo. Que tengas excelente día.",
+                allow_interruptions=False,
+            )
+        except Exception:
+            logger.info("Call already ended before watchdog enforcement")
+            return
+
+        room_name = session.userdata.get("room_name")
+        identity = session.userdata.get("participant_identity")
+
+        lkapi = api.LiveKitAPI()
+
+        try:
+            await lkapi.room.remove_participant(
+                api.RoomParticipantIdentity(
+                    room=room_name,
+                    identity=identity,
+                )
+            )
+
+            logger.info("Participant removed due to max duration")
+
+        finally:
+            await lkapi.aclose()
+
+    except asyncio.CancelledError:
+        logger.info("Call duration watchdog cancelled (call ended normally)")
 
 # =====================================================
 # MAIN
