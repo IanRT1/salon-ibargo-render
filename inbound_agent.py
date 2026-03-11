@@ -339,7 +339,7 @@ async def entrypoint(ctx: JobContext):
             language="es-US",
             voice_name="es-US-Chirp3-HD-Achernar",
             model_name="chirp_3",
-            speaking_rate=1.15,
+            speaking_rate=1.11,
         ),
         vad=ctx.proc.userdata["vad"],
         userdata=ctx.proc.userdata,
