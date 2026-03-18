@@ -28,6 +28,7 @@ from livekit.plugins import openai
 from livekit.plugins import deepgram
 from livekit.plugins.google import tts as google_tts
 from livekit import api
+from livekit.protocol import sip as proto_sip
 
 from utils import (
     generate_call_id,
@@ -49,6 +50,11 @@ BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
 
 INSTRUCTIONS_PATH = BASE_DIR / "instructions.txt"
+FORWARD_NUMBER = "+526865102851"  # Real salon number
+FORWARD_SIP_URI = f"sip:{FORWARD_NUMBER}@salon-ibargo-trunk.pstn.twilio.com"
+BUSINESS_HOURS_START = 00   # 10 AM PST
+BUSINESS_HOURS_END   = 00   # 5 PM PST
+FORWARD_TIMEOUT_SECS = 30
 
 
 # =====================================================
@@ -228,6 +234,92 @@ async def agendar_cita_disponibilidad(
         if api_task and not api_task.done():
             api_task.cancel()
 
+# =====================================================
+# TRANSFER
+# =====================================================
+def is_business_hours() -> bool:
+    now = datetime.now(tz=PST)
+    return BUSINESS_HOURS_START <= now.hour < BUSINESS_HOURS_END
+
+
+async def try_conference_forward(ctx: JobContext, room_name: str) -> bool:
+    lkapi = api.LiveKitAPI()
+    human_answered = asyncio.Event()
+    human_failed   = asyncio.Event()
+    outbound_identity = f"forward_{FORWARD_NUMBER}"
+
+    def on_track_subscribed(track, publication, participant):
+        if participant.identity == outbound_identity:
+            logger.info("conference_forward: human audio track live — answered")
+            human_answered.set()
+
+    def on_participant_disconnected(participant):
+        if participant.identity == outbound_identity:
+            logger.info("conference_forward: outbound leg dropped before answering")
+            human_failed.set()
+
+    ctx.room.on("track_subscribed",         on_track_subscribed)
+    ctx.room.on("participant_disconnected", on_participant_disconnected)
+
+    try:
+        await lkapi.sip.create_sip_participant(
+            proto_sip.CreateSIPParticipantRequest(
+                sip_trunk_id=os.environ.get("SIP_TRUNK_ID", ""),
+                sip_call_to=FORWARD_SIP_URI,
+                room_name=room_name,
+                participant_identity=outbound_identity,
+                participant_name="Salon Ibargo",
+                play_ringtone=True,
+                wait_until_answered=False,
+            )
+        )
+
+        done, pending = await asyncio.wait(
+            [
+                asyncio.create_task(human_answered.wait()),
+                asyncio.create_task(human_failed.wait()),
+            ],
+            timeout=FORWARD_TIMEOUT_SECS,
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+
+        for t in pending:
+            t.cancel()
+
+        if human_answered.is_set():
+            logger.info("conference_forward: human live — dropping agent out")
+            try:
+                await lkapi.room.remove_participant(
+                    api.RoomParticipantIdentity(
+                        room=room_name,
+                        identity=ctx.proc.userdata.get("participant_identity"),
+                    )
+                )
+            except Exception:
+                logger.warning("conference_forward: could not remove agent (may already be gone)")
+            return True
+        else:
+            logger.info("conference_forward: no answer/timeout — removing outbound leg")
+            try:
+                await lkapi.room.remove_participant(
+                    api.RoomParticipantIdentity(
+                        room=room_name,
+                        identity=outbound_identity,
+                    )
+                )
+            except Exception:
+                pass
+            return False
+
+    except Exception:
+        logger.exception("conference_forward: error, falling back to AI")
+        return False
+
+    finally:
+        ctx.room.off("track_subscribed",         on_track_subscribed)
+        ctx.room.off("participant_disconnected", on_participant_disconnected)
+        await lkapi.aclose()
+
 
 # =====================================================
 # AGENT
@@ -402,10 +494,22 @@ async def entrypoint(ctx: JobContext):
     await session.start(agent=agent, room=ctx.room)
     watchdog_task = asyncio.create_task(enforce_max_call_duration(session))
 
-    await session.say(
-        "Hola, soy Mia de salon de eventos Ibargo. ¿En qué puedo ayudarte?",
-        allow_interruptions=True,
-    )
+    # ── Human-first forward ───────────────────────────────────────────────────
+
+    if is_business_hours():
+        logger.info("entrypoint: business hours — attempting forward to human first")
+        forwarded = await try_conference_forward(ctx, ctx.room.name)
+    else:
+        logger.info("entrypoint: outside business hours — going straight to AI")
+        forwarded = False
+
+    if not forwarded:
+        await session.say(
+            "Hola, soy Mia de salon de eventos Ibargo. ¿En qué puedo ayudarte?",
+            allow_interruptions=True,
+        )
+    else:
+        logger.info("entrypoint: human answered, agent removed from room")
 
 async def enforce_max_call_duration(session: AgentSession):
 
