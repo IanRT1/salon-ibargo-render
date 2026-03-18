@@ -288,16 +288,8 @@ async def try_conference_forward(ctx: JobContext, room_name: str) -> bool:
             t.cancel()
 
         if human_answered.is_set():
-            logger.info("conference_forward: human live — dropping agent out")
-            try:
-                await lkapi.room.remove_participant(
-                    api.RoomParticipantIdentity(
-                        room=room_name,
-                        identity=ctx.proc.userdata.get("participant_identity"),
-                    )
-                )
-            except Exception:
-                logger.warning("conference_forward: could not remove agent (may already be gone)")
+            logger.info("conference_forward: human live — leaving room, agent will not start")
+            # Don't remove anyone — caller + human stay bridged in the room
             return True
         else:
             logger.info("conference_forward: no answer/timeout — removing outbound leg")
@@ -489,12 +481,6 @@ async def entrypoint(ctx: JobContext):
 
     ctx.add_shutdown_callback(on_shutdown)
 
-    # ── Start agent ───────────────────────────────────────────────────────────
-
-    agent = Assistant(instructions=instructions)
-    await session.start(agent=agent, room=ctx.room)
-    watchdog_task = asyncio.create_task(enforce_max_call_duration(session))
-
     # ── Human-first forward ───────────────────────────────────────────────────
 
     if is_business_hours():
@@ -504,13 +490,20 @@ async def entrypoint(ctx: JobContext):
         logger.info("entrypoint: outside business hours — going straight to AI")
         forwarded = False
 
-    if not forwarded:
-        await session.say(
-            "Hola, soy Mia de salon de eventos Ibargo. ¿En qué puedo ayudarte?",
-            allow_interruptions=True,
-        )
-    else:
-        logger.info("entrypoint: human answered, agent removed from room")
+    if forwarded:
+        logger.info("entrypoint: human answered — agent staying out, room alive for caller + human")
+        return  # exit entrypoint, session never starts, room stays alive
+
+    # ── Start agent (only reached if forward failed or outside hours) ─────────
+
+    agent = Assistant(instructions=instructions)
+    await session.start(agent=agent, room=ctx.room)
+    watchdog_task = asyncio.create_task(enforce_max_call_duration(session))
+
+    await session.say(
+        "Hola, soy Mia de salon de eventos Ibargo. ¿En qué puedo ayudarte?",
+        allow_interruptions=True,
+    )
 
 async def enforce_max_call_duration(session: AgentSession):
 
