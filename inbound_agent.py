@@ -259,6 +259,8 @@ async def try_conference_forward(ctx: JobContext, room_name: str) -> bool:
 
     ctx.room.on("track_subscribed",         on_track_subscribed)
     ctx.room.on("participant_disconnected", on_participant_disconnected)
+    trunk_id = os.environ.get("SIP_TRUNK_ID", "")
+    logger.info("conference_forward: using SIP_TRUNK_ID=%s", trunk_id)
 
     try:
         await lkapi.sip.create_sip_participant(
