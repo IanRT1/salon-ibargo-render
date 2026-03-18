@@ -261,6 +261,12 @@ async def try_conference_forward(ctx: JobContext, room_name: str) -> bool:
             logger.info("conference_forward: outbound leg disconnected")
             call_failed.set()
 
+    def on_attributes_changed(changed_attributes, participant):
+        if participant.identity == outbound_identity:
+            logger.info("conference_forward: outbound attributes changed — %s | full: %s",
+                        changed_attributes, participant.attributes)
+
+    ctx.room.on("participant_attributes_changed", on_attributes_changed)
     ctx.room.on("sip_dtmf_received",       on_sip_dtmf_received)
     ctx.room.on("participant_disconnected", on_participant_disconnected)
 
