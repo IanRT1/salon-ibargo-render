@@ -244,6 +244,25 @@ def is_business_hours() -> bool:
 async def try_conference_forward(ctx: JobContext, room_name: str) -> bool:
     lkapi = api.LiveKitAPI()
     outbound_identity = f"forward_{FORWARD_NUMBER}"
+    dtmf_confirmed = asyncio.Event()
+    call_failed = asyncio.Event()
+
+    def on_sip_dtmf_received(sip_dtmf):
+        digit = getattr(sip_dtmf, "digit", None) or getattr(sip_dtmf, "code", None)
+        participant = getattr(sip_dtmf, "participant", None)
+        identity = getattr(participant, "identity", "") if participant else ""
+        logger.info("conference_forward: DTMF digit=%s from %s", digit, identity)
+        if identity == outbound_identity and str(digit) == "1":
+            logger.info("conference_forward: staff confirmed with 1")
+            dtmf_confirmed.set()
+
+    def on_participant_disconnected(participant):
+        if participant.identity == outbound_identity:
+            logger.info("conference_forward: outbound leg disconnected")
+            call_failed.set()
+
+    ctx.room.on("sip_dtmf_received",       on_sip_dtmf_received)
+    ctx.room.on("participant_disconnected", on_participant_disconnected)
 
     trunk_id = os.environ.get("SIP_TRUNK_ID", "")
     logger.info("conference_forward: using SIP_TRUNK_ID=%s", trunk_id)
@@ -262,12 +281,38 @@ async def try_conference_forward(ctx: JobContext, room_name: str) -> bool:
             timeout=FORWARD_TIMEOUT_SECS,
         )
 
-        # If we reach here, human answered
-        logger.info("conference_forward: human answered — bridging caller and human")
-        return True
+        logger.info("conference_forward: answered — waiting for DTMF 1 (8s)")
+
+        done, pending = await asyncio.wait(
+            [
+                asyncio.create_task(dtmf_confirmed.wait()),
+                asyncio.create_task(call_failed.wait()),
+            ],
+            timeout=8,
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+
+        for t in pending:
+            t.cancel()
+
+        if dtmf_confirmed.is_set():
+            logger.info("conference_forward: confirmed — bridging")
+            return True
+        else:
+            logger.info("conference_forward: no DTMF — voicemail or ignored, falling back to AI")
+            try:
+                await lkapi.room.remove_participant(
+                    api.RoomParticipantIdentity(
+                        room=room_name,
+                        identity=outbound_identity,
+                    )
+                )
+            except Exception:
+                pass
+            return False
 
     except Exception:
-        logger.info("conference_forward: no answer/timeout/voicemail — removing outbound leg, falling back to AI")
+        logger.info("conference_forward: no answer/timeout — falling back to AI")
         try:
             await lkapi.room.remove_participant(
                 api.RoomParticipantIdentity(
@@ -280,6 +325,8 @@ async def try_conference_forward(ctx: JobContext, room_name: str) -> bool:
         return False
 
     finally:
+        ctx.room.off("sip_dtmf_received",       on_sip_dtmf_received)
+        ctx.room.off("participant_disconnected", on_participant_disconnected)
         await lkapi.aclose()
 
 
@@ -357,6 +404,11 @@ async def entrypoint(ctx: JobContext):
     ctx.proc.userdata["room_name"] = ctx.room.name
 
     logger.info("entrypoint: call metadata | from=%s | to=%s", caller_number, to_number)
+
+    # ── Ignore forwarding loop ────────────────────────────────────────────────
+    if caller_number == FORWARD_NUMBER:
+        logger.info("entrypoint: call from forward number — ignoring to prevent loop")
+        return
 
     # ── Instructions ──────────────────────────────────────────────────────────
 
