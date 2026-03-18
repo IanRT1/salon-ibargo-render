@@ -243,74 +243,43 @@ def is_business_hours() -> bool:
 
 async def try_conference_forward(ctx: JobContext, room_name: str) -> bool:
     lkapi = api.LiveKitAPI()
-    human_answered = asyncio.Event()
-    human_failed   = asyncio.Event()
     outbound_identity = f"forward_{FORWARD_NUMBER}"
 
-    def on_track_subscribed(track, publication, participant):
-        if participant.identity == outbound_identity:
-            logger.info("conference_forward: human audio track live — answered")
-            human_answered.set()
-
-    def on_participant_disconnected(participant):
-        if participant.identity == outbound_identity:
-            logger.info("conference_forward: outbound leg dropped before answering")
-            human_failed.set()
-
-    ctx.room.on("track_subscribed",         on_track_subscribed)
-    ctx.room.on("participant_disconnected", on_participant_disconnected)
     trunk_id = os.environ.get("SIP_TRUNK_ID", "")
     logger.info("conference_forward: using SIP_TRUNK_ID=%s", trunk_id)
 
     try:
         await lkapi.sip.create_sip_participant(
             proto_sip.CreateSIPParticipantRequest(
-                sip_trunk_id=os.environ.get("SIP_TRUNK_ID", ""),
+                sip_trunk_id=trunk_id,
                 sip_call_to=FORWARD_NUMBER,
                 room_name=room_name,
                 participant_identity=outbound_identity,
                 participant_name="Salon Ibargo",
                 play_ringtone=True,
-                wait_until_answered=False,
-            )
-        )
-
-        done, pending = await asyncio.wait(
-            [
-                asyncio.create_task(human_answered.wait()),
-                asyncio.create_task(human_failed.wait()),
-            ],
+                wait_until_answered=True,
+            ),
             timeout=FORWARD_TIMEOUT_SECS,
-            return_when=asyncio.FIRST_COMPLETED,
         )
 
-        for t in pending:
-            t.cancel()
-
-        if human_answered.is_set():
-            logger.info("conference_forward: human live — leaving room, agent will not start")
-            # Don't remove anyone — caller + human stay bridged in the room
-            return True
-        else:
-            logger.info("conference_forward: no answer/timeout — removing outbound leg")
-            try:
-                await lkapi.room.remove_participant(
-                    api.RoomParticipantIdentity(
-                        room=room_name,
-                        identity=outbound_identity,
-                    )
-                )
-            except Exception:
-                pass
-            return False
+        # If we reach here, human answered
+        logger.info("conference_forward: human answered — bridging caller and human")
+        return True
 
     except Exception:
-        logger.exception("conference_forward: error, falling back to AI")
+        logger.info("conference_forward: no answer/timeout/voicemail — removing outbound leg, falling back to AI")
+        try:
+            await lkapi.room.remove_participant(
+                api.RoomParticipantIdentity(
+                    room=room_name,
+                    identity=outbound_identity,
+                )
+            )
+        except Exception:
+            pass
         return False
 
     finally:
-        ctx.room.off("track_subscribed",         on_track_subscribed)
-        ctx.room.off("participant_disconnected", on_participant_disconnected)
         await lkapi.aclose()
 
 
