@@ -51,7 +51,6 @@ load_dotenv(BASE_DIR / ".env")
 
 INSTRUCTIONS_PATH = BASE_DIR / "instructions.txt"
 FORWARD_NUMBER = "+526865102851"  # Real salon number
-FORWARD_SIP_URI = f"sip:{FORWARD_NUMBER}@salon-ibargo-trunk.pstn.twilio.com"
 BUSINESS_HOURS_START = 10   # 10 AM PST
 BUSINESS_HOURS_END   = 17   # 5 PM PST
 FORWARD_TIMEOUT_SECS = 30
@@ -265,7 +264,7 @@ async def try_conference_forward(ctx: JobContext, room_name: str) -> bool:
         await lkapi.sip.create_sip_participant(
             proto_sip.CreateSIPParticipantRequest(
                 sip_trunk_id=os.environ.get("SIP_TRUNK_ID", ""),
-                sip_call_to=FORWARD_SIP_URI,
+                sip_call_to=FORWARD_NUMBER,
                 room_name=room_name,
                 participant_identity=outbound_identity,
                 participant_name="Salon Ibargo",
