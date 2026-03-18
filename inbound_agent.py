@@ -52,8 +52,8 @@ load_dotenv(BASE_DIR / ".env")
 INSTRUCTIONS_PATH = BASE_DIR / "instructions.txt"
 FORWARD_NUMBER = "+526865102851"  # Real salon number
 FORWARD_SIP_URI = f"sip:{FORWARD_NUMBER}@salon-ibargo-trunk.pstn.twilio.com"
-BUSINESS_HOURS_START = 00   # 10 AM PST
-BUSINESS_HOURS_END   = 00   # 5 PM PST
+BUSINESS_HOURS_START = 10   # 10 AM PST
+BUSINESS_HOURS_END   = 17   # 5 PM PST
 FORWARD_TIMEOUT_SECS = 30
 
 
