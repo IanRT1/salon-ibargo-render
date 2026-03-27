@@ -99,7 +99,7 @@ async def end_call(
     )
 
     # Small buffer
-    #await asyncio.sleep(5)
+    await asyncio.sleep(1)
 
     room_name = context.session.userdata.get("room_name")
     identity = context.session.userdata.get("participant_identity")
