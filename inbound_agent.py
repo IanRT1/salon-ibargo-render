@@ -1,13 +1,10 @@
 import logging
 import os
-import secrets
 import asyncio
 import httpx
 import tempfile
-import json
 
 from datetime import datetime
-from zoneinfo import ZoneInfo
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -28,7 +25,6 @@ from livekit.plugins import openai
 from livekit.plugins import deepgram
 from livekit.plugins.google import tts as google_tts
 from livekit import api
-from livekit.protocol import sip as proto_sip
 
 from utils import (
     generate_call_id,
@@ -41,7 +37,6 @@ from utils import (
 # =====================================================
 # CONFIG
 # =====================================================
-
 
 logger = logging.getLogger("inbound_agent")
 logger.setLevel(logging.INFO)
@@ -78,7 +73,7 @@ else:
 
 
 # =====================================================
-# FUNCTION TOOLS (FORWARDERS)
+# FUNCTION TOOLS
 # =====================================================
 
 @function_tool()
@@ -92,14 +87,10 @@ async def end_call(
 
     logger.info("end_call triggered. reason=%s", reason)
 
-    # Speak closing message
     await context.session.say(
         "Gracias por llamar a Salon Ibargo. Que tengas excelente día.",
         allow_interruptions=False,
     )
-
-    # Small buffer
-    #await asyncio.sleep(5)
 
     room_name = context.session.userdata.get("room_name")
     identity = context.session.userdata.get("participant_identity")
@@ -164,7 +155,6 @@ async def agendar_cita_disponibilidad(
     api_task = None
 
     try:
-        # Start API immediately
         api_task = asyncio.create_task(
             call_automation(
                 "/salon_ibargo_agendar_cita_disponibilidad",
@@ -172,7 +162,6 @@ async def agendar_cita_disponibilidad(
             )
         )
 
-        # Speak while backend runs
         await context.session.say(
             "Gracias por proporcionar los datos para agendar tu cita. "
             "Espera un momento mientras verifico tus datos para mayor precisión",
@@ -197,7 +186,6 @@ async def agendar_cita_disponibilidad(
         return message
 
     except httpx.HTTPStatusError as e:
-        # Backend returned 4xx / 5xx
         try:
             error_json = e.response.json()
             detail = error_json.get("detail")
@@ -221,9 +209,7 @@ async def agendar_cita_disponibilidad(
 
     except Exception:
         logger.exception("Unexpected error in agendar_cita_disponibilidad")
-        return (
-            "Lo siento, ocurrió un problema al verificar la disponibilidad."
-        )
+        return "Lo siento, ocurrió un problema al verificar la disponibilidad."
 
     finally:
         if api_task and not api_task.done():
@@ -237,6 +223,7 @@ async def agendar_cita_disponibilidad(
 class Assistant(Agent):
     agendar_cita_disponibilidad = agendar_cita_disponibilidad
     end_call = end_call
+
 
 def prewarm(proc: JobProcess):
     proc.userdata["vad"] = silero.VAD.load(
@@ -397,7 +384,20 @@ async def entrypoint(ctx: JobContext):
 
     ctx.add_shutdown_callback(on_shutdown)
 
-    # ── Start agent ─────────
+    # ── Human-first forward ───────────────────────────────────────────────────
+
+    if is_business_hours():
+        logger.info("entrypoint: business hours — attempting forward to human first")
+        forwarded = await try_conference_forward(ctx, ctx.room.name)
+    else:
+        logger.info("entrypoint: outside business hours — going straight to AI")
+        forwarded = False
+
+    if forwarded:
+        logger.info("entrypoint: human answered — agent staying out, room alive for caller + human")
+        return  # exit entrypoint, session never starts, room stays alive
+
+    # ── Start agent (only reached if forward failed or outside hours) ─────────
 
     agent = Assistant(instructions=instructions)
     await session.start(agent=agent, room=ctx.room)
@@ -407,6 +407,7 @@ async def entrypoint(ctx: JobContext):
         "Hola, soy Mia de salon de eventos Ibargo. ¿En qué puedo ayudarte?",
         allow_interruptions=True,
     )
+
 
 async def enforce_max_call_duration(session: AgentSession):
 
@@ -447,6 +448,7 @@ async def enforce_max_call_duration(session: AgentSession):
 
     except asyncio.CancelledError:
         logger.info("Call duration watchdog cancelled (call ended normally)")
+
 
 # =====================================================
 # MAIN
