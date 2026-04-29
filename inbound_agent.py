@@ -404,7 +404,7 @@ async def entrypoint(ctx: JobContext):
     watchdog_task = asyncio.create_task(enforce_max_call_duration(session))
 
     await session.say(
-        "Hola, soy Mia de salon de eventos Ibargo. ¿En qué puedo ayudarte?",
+        "Hola, soy Mía de Salón Ibargo. ¿En qué puedo ayudarte?",
         allow_interruptions=True,
     )
 
